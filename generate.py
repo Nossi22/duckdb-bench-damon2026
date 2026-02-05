@@ -2,7 +2,7 @@ import duckdb
 from pathlib import Path
 import argparse
 
-def generate_tpch_parquet(output_dir: str = "data/tpch", scale_factor: int = 1):
+def generate_tpch_parquet(output_dir: str = "data/tpch", format: str = "parquet", scale_factor: int = 1):
     """
     Generate TPC-H data and write each table to a Parquet file.
     
@@ -37,12 +37,17 @@ def generate_tpch_parquet(output_dir: str = "data/tpch", scale_factor: int = 1):
     
     # Export each table to Parquet
     for table in tables:
-        parquet_file = output_path / f"{table}.parquet"
-        print(f"Writing {table} to {parquet_file}...")
-        con.execute(f"COPY {table} TO '{parquet_file}' (FORMAT PARQUET, COMPRESSION SNAPPY)")
+        filename = output_path / f"{table}.{format}"
+        print(f"Writing {table} to {filename}...")
+        if format == "parquet":
+            con.execute(f"COPY {table} TO '{filename}' (FORMAT PARQUET, COMPRESSION SNAPPY)")
+        elif format == "csv":
+            con.execute(f"COPY {table} TO '{filename}' (FORMAT CSV)")
+        elif format == "json":
+            con.execute(f"COPY {table} TO '{filename}' (FORMAT JSON)")
         
         # Print row count for verification
-        row_count = con.execute(f"SELECT COUNT(*) FROM '{parquet_file}'").fetchone()[0]
+        row_count = con.execute(f"SELECT COUNT(*) FROM '{filename}'").fetchone()[0]
         print(f"  -> {row_count:,} rows")
     
     con.close()
@@ -61,6 +66,14 @@ def main():
         help="TPC-H scale factor (default: 1)"
     )
     parser.add_argument(
+        "-f", "--format",
+        type=str,
+        default="parquet",
+        dest="format",
+        metavar="FORMAT",
+        help="Output format (default: parquet)"
+    )
+    parser.add_argument(
         "-o", "--output",
         type=str,
         default="data/tpch",
@@ -70,7 +83,7 @@ def main():
     )
     
     args = parser.parse_args()
-    generate_tpch_parquet(scale_factor=args.scale_factor, output_dir=args.output_dir)
+    generate_tpch_parquet(scale_factor=args.scale_factor, format=args.format, output_dir=args.output_dir)
 
 
 if __name__ == "__main__":
