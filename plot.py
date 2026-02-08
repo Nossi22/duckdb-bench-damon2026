@@ -55,11 +55,10 @@ def plot_cpu_time(df):
     ax.legend(loc="lower right", framealpha=1.0)
 
     plt.tight_layout()
-    plt.savefig("cpu_time_stacked.pdf", bbox_inches="tight")
+    plt.savefig("plots/cpu_time_stacked.pdf", bbox_inches="tight")
 
 def plot_appetizer(df):
     data = df.copy()
-    agg = data[data["query"].str.contains("q21.sql")]
 
     plt.rcParams.update({
         "grid.linestyle": "--",
@@ -75,30 +74,44 @@ def plot_appetizer(df):
     ax.grid(axis='y')
     ax.grid(axis='x', visible=False)
 
-    for source, color, marker in [("memory", COLOR_MEMORY, "o"), ("parquet", COLOR_PARQUET, "s")]:
-        subset = agg[agg["source"] == source].sort_values("threads")
-        ax.plot(subset["threads"], subset["latency_sec"],
-                marker=marker, color=color, label=source.capitalize(), linewidth=2)
+    subset = data[(data["source"] == "parquet") & (data["streams"] == 8)].sort_values("threads")
+    ax.plot(subset["threads"], subset["runtime_sec"], marker="s", color=COLOR_PARQUET, 
+            label="Parquet", linewidth=2)
+    
+    memory_val = data[(data["source"] == "memory") & (data["streams"] == 8)]["runtime_sec"].values[0]
+    ax.axhline(y=memory_val, color=COLOR_MEMORY, linestyle="--", linewidth=2, label="Memory")
 
     ax.set_xlabel("Number of Threads")
     ax.set_ylabel("Latency (sec)")
     ax.set_xticks(sorted(df["threads"].unique()))
     ax.legend(loc="upper right", framealpha=1.0)
     plt.tight_layout()
-    plt.savefig("latency_by_threads.pdf", bbox_inches="tight")
+    plt.savefig("plots/latency_by_threads.pdf", bbox_inches="tight")
 
 def main():
-    data = []
+    # Queries plots
+    queries_data = []
 
-    for filepath in glob.glob(os.path.join("measurements", "run-*.json")):
+    for filepath in glob.glob(os.path.join("measurements", "queries", "*.json")):
         with open(filepath, "r") as f:
             this_data = json.load(f) # each file contains a JSON array of objects
-            data.extend(this_data)
+            queries_data.extend(this_data)
 
-    df = pd.DataFrame(data)
+    queries_df = pd.DataFrame(queries_data)
 
-    plot_cpu_time(df)
-    plot_appetizer(df)
+    plot_cpu_time(queries_df)
+
+    # Throughput plots
+    throughput_data = []
+
+    for filepath in glob.glob(os.path.join("measurements", "throughput", "*.json")):
+        with open(filepath, "r") as f:
+            this_data = json.load(f) # each file contains a JSON object
+            throughput_data.append(this_data)
+
+    throughput_df = pd.DataFrame(throughput_data)
+
+    plot_appetizer(throughput_df)
 
 if __name__ == "__main__":
     main()

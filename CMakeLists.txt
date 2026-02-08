@@ -11,7 +11,9 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # Optimization flags for benchmarking
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -march=native")
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -DNDEBUG -march=native")
+
+option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
 
 # Find DuckDB - adjust path as needed
 # Option 1: System-installed DuckDB
@@ -30,19 +32,26 @@ if(NOT DuckDB_FOUND)
     # DuckDB build options
     set(BUILD_UNITTESTS OFF CACHE BOOL "" FORCE)
     set(BUILD_SHELL OFF CACHE BOOL "" FORCE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
     
     message(STATUS "Fetching DuckDB...")
     FetchContent_MakeAvailable(duckdb)
 endif()
 
-add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
-add_link_options(-fsanitize=address)
+# Main benchmark executables
+add_executable(queries    src/queries.cpp)
+add_executable(throughput src/throughput.cpp)
 
-# Main benchmark executable
-add_executable(damon_bench src/main.cpp)
+target_include_directories(queries PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(throughput PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
+# Determine which DuckDB target to use
 if(DuckDB_FOUND)
-    target_link_libraries(damon_bench PRIVATE DuckDB::DuckDB)
+    set(DUCKDB_TARGET DuckDB::DuckDB)
 else()
-    target_link_libraries(damon_bench PRIVATE duckdb)
+    set(DUCKDB_TARGET duckdb)
 endif()
+
+# Link executables
+target_link_libraries(queries PRIVATE ${DUCKDB_TARGET})
+target_link_libraries(throughput PRIVATE ${DUCKDB_TARGET})
