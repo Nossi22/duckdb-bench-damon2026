@@ -18,9 +18,9 @@ def plot_cpu_time(df):
 
     # The "memory" portion is the base (compute time on in-memory data)
     # The "parquet" overhead is the difference: parquet - memory (decoding cost)
-    pivot["memory_pct"] = (pivot["memory"] / pivot["parquet"]) * 100
-    pivot["overhead_pct"] = ((pivot["parquet"] - pivot["memory"]) / pivot["parquet"]) * 100
-
+    pivot["filter_pct"] = ((pivot["memory"] - pivot["filtered"]) / pivot["parquet"]) * 100
+    pivot["decode_pct"] = ((pivot["parquet"] - pivot["memory"]) / pivot["parquet"]) * 100
+    pivot["query_pct"] = (pivot["filtered"] / pivot["parquet"]) * 100
 
     # --- Plot ---
     plt.rcParams.update({
@@ -31,6 +31,7 @@ def plot_cpu_time(df):
 
     COLOR_QUERY = "#4878d0"
     COLOR_DECODE = "#d65f5f"
+    COLOR_FILTERED = "#59a14f"
 
     _, ax = plt.subplots(figsize=(8, 5))
 
@@ -42,11 +43,9 @@ def plot_cpu_time(df):
     x = np.arange(len(pivot.index))
     width = 0.5
 
-    # Bottom stack: memory (compute) time
-    ax.bar(x, pivot["memory_pct"], width, label="Query", color=COLOR_QUERY)
-
-    # Top stack: parquet overhead (decode)
-    ax.bar(x, pivot["overhead_pct"], width, bottom=pivot["memory_pct"], label="Decode", color=COLOR_DECODE)
+    ax.bar(x, [100 for _ in range(len(pivot.index))], width, label="Query", color=COLOR_QUERY)
+    ax.bar(x, pivot["filter_pct"], width, bottom=pivot["decode_pct"], label="Filter", color=COLOR_FILTERED)
+    ax.bar(x, pivot["decode_pct"], width, label="Decode", color=COLOR_DECODE)
 
     ax.set_xticks(x)
     ax.set_xticklabels(pivot.index, rotation=90)
@@ -76,14 +75,14 @@ def plot_appetizer(df):
     ax.grid(axis='x', visible=False)
 
     subset = data[(data["source"] == "parquet") & (data["streams"] == 8)].sort_values("threads")
-    ax.plot(subset["threads"], (8.0 * 22) / subset["runtime_sec"], marker="s", color=COLOR_PARQUET, 
+    ax.plot(subset["threads"], (8.0 * 22 * 3600) / subset["runtime_sec"], marker="s", color=COLOR_PARQUET, 
             label="Parquet files", linewidth=2)
     
-    memory_val = (8.0 * 22) / data[(data["source"] == "memory") & (data["streams"] == 8)]["runtime_sec"].values[0]
+    memory_val = (8.0 * 22 * 3600) / data[(data["source"] == "memory") & (data["streams"] == 8)]["runtime_sec"].values[0]
     ax.axhline(y=memory_val, color=COLOR_MEMORY, linestyle="--", linewidth=2, label="In-memory tables (threads=8)")
 
     ax.set_xlabel("Number of threads")
-    ax.set_ylabel("Queries / s")
+    ax.set_ylabel("Queries / h")
     ax.set_xticks(sorted(df["threads"].unique()))
     ax.legend(loc="lower right", framealpha=1.0)
     plt.tight_layout()
@@ -115,4 +114,5 @@ def main():
     plot_appetizer(throughput_df)
 
 if __name__ == "__main__":
+    os.makedirs("plots", exist_ok=True)
     main()
