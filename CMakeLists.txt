@@ -19,23 +19,15 @@ option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
 # Option 1: System-installed DuckDB
 find_package(DuckDB QUIET)
 
-if(NOT DuckDB_FOUND)
-    # Option 2: FetchContent to download DuckDB
-    include(FetchContent)
-    FetchContent_Declare(
-        duckdb
-        GIT_REPOSITORY https://github.com/duckdb/duckdb.git
-        GIT_TAG        v1.4.4
-        GIT_SHALLOW    TRUE
-    )
-    
-    # DuckDB build options
+if(DuckDB_FOUND)
+    set(DUCKDB_TARGET DuckDB::DuckDB)
+else()
     set(BUILD_UNITTESTS OFF CACHE BOOL "" FORCE)
     set(BUILD_SHELL OFF CACHE BOOL "" FORCE)
-    set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
-    
-    message(STATUS "Fetching DuckDB...")
-    FetchContent_MakeAvailable(duckdb)
+
+    add_subdirectory(duckdb)
+
+    set(DUCKDB_TARGET duckdb)
 endif()
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -43,13 +35,6 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
 # Main benchmark executables
 add_executable(queries    src/queries.cpp)
 add_executable(throughput src/throughput.cpp)
-
-# Determine which DuckDB target to use
-if(DuckDB_FOUND)
-    set(DUCKDB_TARGET DuckDB::DuckDB)
-else()
-    set(DUCKDB_TARGET duckdb)
-endif()
 
 # Link executables
 target_link_libraries(queries PRIVATE ${DUCKDB_TARGET})

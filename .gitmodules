@@ -4,3 +4,6 @@
 [submodule "extension/duckdb"]
 	path = extension/duckdb
 	url = git@github.com:duckdb/duckdb.git
+[submodule "duckdb"]
+	path = duckdb
+	url = https://github.com/duckdb/duckdb.git
