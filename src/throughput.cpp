@@ -61,7 +61,7 @@ public:
 // Benchmark Execution
 // ============================================================================
 
-double run_throughput_benchmark(std::shared_ptr<duckdb::DuckDB> db, uint32_t num_streams, 
+std::vector<double> run_throughput_benchmark(std::shared_ptr<duckdb::DuckDB> db, uint32_t num_streams, 
         uint32_t num_repetitions, const std::vector<std::string>& queries) {        
     std::vector<QueryStream> streams;
     
@@ -91,7 +91,8 @@ double run_throughput_benchmark(std::shared_ptr<duckdb::DuckDB> db, uint32_t num
         runtimes.push_back(elapsed);
     }
     
-    return std::accumulate(runtimes.begin(), runtimes.end(), 0.0) / num_repetitions;
+    
+    return runtimes;
 }
 
 // ============================================================================
@@ -164,14 +165,23 @@ Config parse_args(int argc, char* argv[]) {
 // Write JSON
 // ============================================================================
 
-void write_json(uint32_t num_threads, const Config& config, double result, 
+void write_json(uint32_t num_threads, const Config& config, std::vector<double> result, 
                 const std::string& output_file) {
     std::ofstream out(output_file);
+
+    std::sort(result.begin(), result.end());
     
     // Write result
     out << "{\n";
     out << "    \"runtime_sec\": " << std::fixed << std::setprecision(6) 
-        << result << ",\n";
+        << result[result.size() / 2] << ",\n";
+    out << "    \"runtimes\": [";
+    for (size_t i = 0; i < result.size(); ++i) {
+        out << std::fixed << std::setprecision(6) << result[i];
+        if (i + 1 < result.size()) 
+            out << ", ";
+    }
+    out << "],\n";
     out << "    \"threads\": " << num_threads << ",\n";
     out << "    \"streams\": " << config.streams << ",\n";
     out << "    \"data_dir\": \"" << config.data_dir << "\",\n";

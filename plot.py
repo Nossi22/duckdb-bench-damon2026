@@ -80,33 +80,37 @@ def plot_cpu_time(df):
     plt.tight_layout()
     plt.savefig("plots/cpu_time_stacked.pdf", bbox_inches="tight")
 
-def plot_appetizer(df_3, df_10):
+def plot_appetizer(df_10, df_30):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8, 3.5))
     
-    for ax, data, sf, label in [(ax1, df_3.copy(), 3, "a"), (ax2, df_10.copy(), 10, "b")]:
+    for ax, data, sf, label, streams in [(ax1, df_10.copy(), 10, "a", 3), (ax2, df_30.copy(), 30, "b", 4)]:
         ax.set_axisbelow(True)
         ax.grid(axis='y')
         ax.grid(axis='x')
-        ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{x/1000:.0f}k"))
-        ax.set_xlim(0, 33)
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{x/1000:.0f}k" if x > 0 else "0"))
+        ax.set_xlim(0, 65)
         ax.tick_params(axis='both', length=0)
         
-        subset = data[(data["source"] == "parquet") & (data["streams"] == 8)].sort_values("threads")
-        ax.plot(subset["threads"], (8.0 * 22 * 3600) / subset["runtime_sec"], marker="s", color=COLOR_DECODE, 
-                label="Parquet files", markersize=4)
+        factor = streams * 22 * 3600
+        subset = data[(data["source"] == "parquet") & (data["streams"] == streams)].sort_values("threads")
+        ax.plot(subset["threads"], factor / subset["runtime_sec"], marker="s", color=COLOR_DECODE, 
+                label="Parquet files", markersize=2)
         
-        subset = data[(data["source"] == "memory") & (data["streams"] == 8)].sort_values("threads")
-        ax.plot(subset["threads"], (8.0 * 22 * 3600) / subset["runtime_sec"], marker="o", color=COLOR_FILTERED, 
-                label="Tables", markersize=4)
+        subset = data[(data["source"] == "memory") & (data["streams"] == streams)].sort_values("threads")
+        ax.plot(subset["threads"], factor / subset["runtime_sec"], marker="o", color=COLOR_FILTERED, 
+                label="Tables", markersize=2)
         
-        memory_val = (8.0 * 22 * 3600) / data[(data["source"] == "filtered") & (data["threads"] == 1) & (data["streams"] == 8)]["runtime_sec"].values[0]
-        ax.axhline(y=memory_val, color=COLOR_QUERY, linestyle="--", label="Pre-filtered tables (single thread)")
-        ax.plot(1, memory_val, marker="^", color=COLOR_QUERY, markersize=4)
-        ax.text(subset["threads"].values[-1] - 8.25, memory_val - (ax.get_ylim()[1] - ax.get_ylim()[0]) * 0.08, f"{memory_val:.0f} Q/h", ha="left")
+        subset = data[(data["source"] == "filtered") & (data["streams"] == streams)].sort_values("threads")
+        ax.plot(subset["threads"], factor / subset["runtime_sec"], marker="^", color=COLOR_QUERY, 
+                label="Pre-filtered tables", markersize=2)
+        
+        memory_val = factor / data[(data["source"] == "filtered") & (data["threads"] == 16) & (data["streams"] == streams)]["runtime_sec"].values[0]
+        ax.axhline(y=memory_val, color=COLOR_QUERY, linestyle="--")
+        ax.text(subset["threads"].values[-1] * 0.725, memory_val + (ax.get_ylim()[1] - ax.get_ylim()[0]) * 0.02, f"{memory_val:.0f} Q/h", ha="left")
         
         ax.set_xlabel("Number of threads", fontweight="bold")
         ticks = sorted(data["threads"].unique())
-        ticks = [t for t in ticks if t == 1 or t % 4 == 0]
+        ticks = [t for t in ticks if t == 1 or t % 8 == 0]
         ax.set_xticks(ticks)
         ax.set_xticklabels(ticks)
         ax.set_title(f"({label}) TPC-H scale factor {sf}", fontsize=12, y=-0.35)
@@ -134,22 +138,22 @@ def main():
     plot_cpu_time(queries_df)
 
     # Throughput plots
-    throughput_data_3 = []
     throughput_data_10 = []
+    throughput_data_30 = []
 
-    for filepath in glob.glob(os.path.join("measurements", "throughput", "tpch-3", "*.json")):
-        with open(filepath, "r") as f:
-            this_data = json.load(f) # each file contains a JSON object
-            throughput_data_3.append(this_data)
     for filepath in glob.glob(os.path.join("measurements", "throughput", "tpch-10", "*.json")):
         with open(filepath, "r") as f:
             this_data = json.load(f) # each file contains a JSON object
             throughput_data_10.append(this_data)
-
-    throughput_df_3  = pd.DataFrame(throughput_data_3)
+    for filepath in glob.glob(os.path.join("measurements", "throughput", "tpch-30", "*.json")):
+        with open(filepath, "r") as f:
+            this_data = json.load(f) # each file contains a JSON object
+            throughput_data_30.append(this_data)
+    
     throughput_df_10 = pd.DataFrame(throughput_data_10)
+    throughput_df_30 = pd.DataFrame(throughput_data_30)
 
-    plot_appetizer(throughput_df_3, throughput_df_10)
+    plot_appetizer(throughput_df_10, throughput_df_30)
 
 if __name__ == "__main__":
     os.makedirs("plots", exist_ok=True)
