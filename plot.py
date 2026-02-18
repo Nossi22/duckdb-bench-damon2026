@@ -68,8 +68,8 @@ def plot_cpu_time(df):
     ax.axhline(y=avg_query, color=COLOR_FILTERED, linestyle="--", linewidth=1.5)
     ax.axhline(y=avg_decode, color=COLOR_DECODE, linestyle="--", linewidth=1.5)
 
-    ax.text(len(pivot.index) - 0.5, avg_query + 1.5, f"{avg_query:.0f}%", fontweight="bold", ha="left")
-    ax.text(len(pivot.index) - 0.5, avg_decode + 1.5, f"{avg_decode:.0f}%", fontweight="bold", ha="left")
+    ax.text(len(pivot.index) - 0.5, avg_query + 1.5, f"{avg_query:.0f}%", ha="left")
+    ax.text(len(pivot.index) - 0.5, avg_decode + 1.5, f"{avg_decode:.0f}%", ha="left")
 
     ax.set_xticks(x)
     ax.set_xticklabels(pivot.index, rotation=90)
@@ -97,7 +97,7 @@ def plot_appetizer(df_10, df_30):
                 label="Parquet files", markersize=2)
         
         subset = data[(data["source"] == "memory") & (data["streams"] == streams)].sort_values("threads")
-        ax.plot(subset["threads"], factor / subset["runtime_sec"], marker="o", color=COLOR_FILTERED, 
+        ax.plot(subset["threads"], factor / subset["runtimes"].apply(lambda x: min(x)), marker="o", color=COLOR_FILTERED, 
                 label="Tables", markersize=2)
         
         subset = data[(data["source"] == "filtered") & (data["streams"] == streams)].sort_values("threads")
@@ -106,7 +106,16 @@ def plot_appetizer(df_10, df_30):
         
         memory_val = factor / data[(data["source"] == "filtered") & (data["threads"] == 16) & (data["streams"] == streams)]["runtime_sec"].values[0]
         ax.axhline(y=memory_val, color=COLOR_QUERY, linestyle="--")
-        ax.text(subset["threads"].values[-1] * 0.725, memory_val + (ax.get_ylim()[1] - ax.get_ylim()[0]) * 0.02, f"{memory_val:.0f} Q/h", ha="left")
+        ax.text(subset["threads"].values[-1] * 0.8, memory_val + (ax.get_ylim()[1] - ax.get_ylim()[0]) * 0.02, f"{memory_val:.0f} Q/h", ha="left",
+                fontsize=10)
+
+        if sf == 10:
+            ax.annotate("16 threads",
+                xy=(16, memory_val),
+                xytext=(10, memory_val + (ax.get_ylim()[1] - ax.get_ylim()[0]) * 0.15),
+                arrowprops=dict(arrowstyle="->", color="#3A3A3C", lw=1.0),
+                fontsize=10, ha="center",
+            )
         
         ax.set_xlabel("Number of threads", fontweight="bold")
         ticks = sorted(data["threads"].unique())
