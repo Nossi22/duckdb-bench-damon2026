@@ -214,7 +214,7 @@ int main(int argc, char* argv[]) {
     auto db = std::make_shared<duckdb::DuckDB>(nullptr, &duck_config);
     duckdb::Connection setup_con(*db);
     
-    setup_con.Query("SET GLOBAL enable_object_cache TO false");
+    setup_con.Query("SET parquet_metadata_cache TO true");
 
     // Load view rewriter extension
     setup_con.Query("LOAD 'extension/build/release/extension/view_rewriter/view_rewriter.duckdb_extension'");
