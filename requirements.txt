@@ -1,1 +1,4 @@
 duckdb
+pandas
+matplotlib
+numpy
