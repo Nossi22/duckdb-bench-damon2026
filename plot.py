@@ -1,6 +1,7 @@
 import json
 import glob
 import os
+import argparse
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
@@ -33,6 +34,52 @@ COLOR_FILTERED = "#A3BE8C"
 
 COLOR_CSV = "#D08770"
 COLOR_JSON = "#B48EAD"
+
+
+def load_throughput_measurements(pattern):
+    rows = []
+    for filepath in glob.glob(pattern, recursive=True):
+        with open(filepath, "r") as f:
+            this_data = json.load(f)
+            if isinstance(this_data, dict):
+                rows.append(this_data)
+    return rows
+
+
+def plot_throughput_only(df, output_path):
+    required = {"threads", "streams", "runtime_sec"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Missing required throughput fields: {sorted(missing)}")
+
+    data = df.copy()
+    data["source"] = data["source"] if "source" in data.columns else "parquet"
+    data["qph"] = data["streams"] * 22 * 3600 / data["runtime_sec"]
+
+    _, ax = plt.subplots(figsize=(8, 3.25))
+    ax.set_axisbelow(True)
+    ax.grid(axis='y')
+    ax.grid(axis='x')
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{x/1000:.0f}k" if x > 0 else "0"))
+    ax.tick_params(axis='both', length=0)
+
+    markers = ["o", "s", "^", "D", "v", "P", "X"]
+    for idx, ((source, streams), subset) in enumerate(data.groupby(["source", "streams"])):
+        subset = subset.sort_values("threads")
+        ax.plot(
+            subset["threads"],
+            subset["qph"],
+            marker=markers[idx % len(markers)],
+            label=f"{source}, {int(streams)} stream(s)",
+            markersize=3,
+        )
+
+    ax.set_xlabel("Number of threads", fontweight="bold")
+    ax.set_ylabel("Queries / h", fontweight="bold")
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.2), ncol=3, frameon=False, prop={'weight': 'bold'})
+
+    plt.tight_layout()
+    plt.savefig(output_path, bbox_inches="tight")
 
 def plot_cpu_time(df):
     data = df.copy()
@@ -236,6 +283,35 @@ def plot_csv_json(df_10, df_10_unsorted, df_10_sorted):
     plt.savefig("plots/csv_json.pdf", bbox_inches="tight")
 
 def main():
+    parser = argparse.ArgumentParser(description="Plot benchmark measurements")
+    parser.add_argument(
+        "--throughput-only",
+        action="store_true",
+        help="Plot throughput from available throughput JSON files only (works with partial runs)",
+    )
+    parser.add_argument(
+        "--throughput-input",
+        type=str,
+        default=os.path.join("measurements", "throughput", "**", "*.json"),
+        help="Glob pattern for throughput JSON files",
+    )
+    parser.add_argument(
+        "--throughput-output",
+        type=str,
+        default=os.path.join("plots", "throughput_partial.pdf"),
+        help="Output file path for throughput-only plot",
+    )
+
+    args = parser.parse_args()
+
+    if args.throughput_only:
+        throughput_rows = load_throughput_measurements(args.throughput_input)
+        if not throughput_rows:
+            raise ValueError(f"No throughput JSON objects found for pattern: {args.throughput_input}")
+        throughput_df = pd.DataFrame(throughput_rows)
+        plot_throughput_only(throughput_df, args.throughput_output)
+        return
+
     # Queries plots
     queries_data = []
 
@@ -246,7 +322,11 @@ def main():
 
     queries_df = pd.DataFrame(queries_data)
 
-    plot_cpu_time(queries_df)
+    query_required = {"threads", "query", "source", "cpu_time_sec"}
+    if query_required.issubset(set(queries_df.columns)):
+        plot_cpu_time(queries_df)
+    else:
+        print("Skipping cpu_time_stacked.pdf (missing query measurements in measurements/queries/tpch-30)")
 
     # Throughput plots
     throughput_data_10 = []
@@ -264,7 +344,11 @@ def main():
     throughput_df_10 = pd.DataFrame(throughput_data_10)
     throughput_df_30 = pd.DataFrame(throughput_data_30)
 
-    plot_appetizer(throughput_df_10, throughput_df_30)
+    throughput_required = {"source", "streams", "threads", "runtime_sec"}
+    if throughput_required.issubset(set(throughput_df_10.columns)) and throughput_required.issubset(set(throughput_df_30.columns)):
+        plot_appetizer(throughput_df_10, throughput_df_30)
+    else:
+        print("Skipping latency_by_threads.pdf (missing throughput measurements in tpch-10/tpch-30)")
 
     # CSV and JSON plot
     throughput_data_10 = []
@@ -288,7 +372,16 @@ def main():
     unsorted_df_10 = pd.DataFrame(unsorted_data_10)
     sorted_df_10 = pd.DataFrame(sorted_data_10)
 
-    plot_csv_json(throughput_df_10, unsorted_df_10, sorted_df_10)
+    csv_json_required = {"source", "streams", "threads", "runtime_sec"}
+    query_compare_required = {"source", "threads", "query", "operators", "runtime_sec"}
+    if (
+        csv_json_required.issubset(set(throughput_df_10.columns))
+        and query_compare_required.issubset(set(unsorted_df_10.columns))
+        and query_compare_required.issubset(set(sorted_df_10.columns))
+    ):
+        plot_csv_json(throughput_df_10, unsorted_df_10, sorted_df_10)
+    else:
+        print("Skipping csv_json.pdf (missing csv/json or sorted/random query measurements)")
 
 if __name__ == "__main__":
     os.makedirs("plots", exist_ok=True)
