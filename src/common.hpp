@@ -15,7 +15,8 @@ enum class Source {
     JSON      = 2,
     MEMORY    = 3,
     FILTERED  = 4,
-    PROJECTED = 5
+    PROJECTED = 5,
+    MINIO     = 6
 };
 
 const char* source_to_string(Source s) {
@@ -26,6 +27,7 @@ const char* source_to_string(Source s) {
         case Source::MEMORY:    return "memory";
         case Source::FILTERED:  return "filtered";
         case Source::PROJECTED: return "projected";
+        case Source::MINIO:     return "minio";
     }
     throw std::runtime_error("Unknown source!");
 }
@@ -37,6 +39,7 @@ Source string_to_source(const std::string& s) {
     if (s == "memory")    return Source::MEMORY;
     if (s == "filtered")  return Source::FILTERED;
     if (s == "projected") return Source::PROJECTED;
+    if (s == "minio")     return Source::MINIO;
     throw std::runtime_error("Unknown source: " + s);
 }
 
@@ -108,15 +111,24 @@ void load_data(duckdb::Connection& con, const std::string& data_dir, Source sour
     const std::vector<std::string> tables = {
         "customer", "lineitem", "nation", "orders", "part", "partsupp", "region", "supplier"
     };
+    
+    
+    if (source == Source::MINIO) {
+        
 
-    if (!fs::exists(data_dir) || !fs::is_directory(data_dir)) {
-        throw std::runtime_error("Data directory does not exist: " + data_dir);
+        
+
+    } else {
+        if (!fs::exists(data_dir) || !fs::is_directory(data_dir)) {
+            throw std::runtime_error("Data directory does not exist: " + data_dir);
+        }
     }
+    
     
     for (const auto& table : tables) {
         std::string sql;
         switch (source) {
-            case Source::PARQUET:
+            case Source::PARQUET:   
                 sql = "CREATE VIEW " + table + " AS SELECT * FROM read_parquet('" +
                       data_dir + "/" + table + ".parquet')"; break;
             case Source::CSV:
@@ -125,6 +137,9 @@ void load_data(duckdb::Connection& con, const std::string& data_dir, Source sour
             case Source::JSON:
                 sql = "CREATE VIEW " + table + " AS SELECT * FROM read_json('" +
                       data_dir + "/" + table + ".json')"; break;
+            case Source::MINIO:
+                sql = "CREATE VIEW " + table + " AS SELECT * FROM read_parquet('s3://" +
+                      data_dir + "/" + table + ".parquet')"; break;
             default: // MEMORY, FILTERED, PROJECTED all load standard tables
                 sql = "CREATE TABLE " + table + " AS SELECT * FROM read_parquet('" +
                       data_dir + "/" + table + ".parquet')"; break;
