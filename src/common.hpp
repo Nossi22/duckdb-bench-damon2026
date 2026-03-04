@@ -1,6 +1,5 @@
 #include <filesystem>
 #include <iostream>
-#include <sstream>
 
 #include <duckdb.hpp>
 
@@ -110,9 +109,7 @@ void load_data(duckdb::Connection& con, const std::string& data_dir, Source sour
         "customer", "lineitem", "nation", "orders", "part", "partsupp", "region", "supplier"
     };
 
-    bool is_s3_data = data_dir.rfind("s3://", 0) == 0;
-
-    if (!is_s3_data && (!fs::exists(data_dir) || !fs::is_directory(data_dir))) {
+    if (!fs::exists(data_dir) || !fs::is_directory(data_dir)) {
         throw std::runtime_error("Data directory does not exist: " + data_dir);
     }
     

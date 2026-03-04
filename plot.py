@@ -1,7 +1,6 @@
 import json
 import glob
 import os
-import argparse
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
@@ -34,82 +33,6 @@ COLOR_FILTERED = "#A3BE8C"
 
 COLOR_CSV = "#D08770"
 COLOR_JSON = "#B48EAD"
-
-
-def load_throughput_measurements(pattern):
-    rows = []
-    for filepath in glob.glob(pattern, recursive=True):
-        try:
-            with open(filepath, "r") as f:
-                this_data = json.load(f)
-                if isinstance(this_data, dict):
-                    rows.append(this_data)
-        except (OSError, json.JSONDecodeError):
-            continue
-    return rows
-
-
-def plot_throughput_only(df, output_path, metric="qph"):
-    if metric == "qph":
-        required = {"threads", "streams", "runtime_sec"}
-    else:
-        required = {"threads", "streams", "median_net_gbps"}
-
-    missing = required - set(df.columns)
-    if missing:
-        raise ValueError(f"Missing required throughput fields: {sorted(missing)}")
-
-    data = df.copy()
-    data["source"] = data["source"] if "source" in data.columns else "parquet"
-
-    data["threads"] = pd.to_numeric(data["threads"], errors="coerce")
-    data["streams"] = pd.to_numeric(data["streams"], errors="coerce")
-
-    if metric == "qph":
-        data["runtime_sec"] = pd.to_numeric(data["runtime_sec"], errors="coerce")
-        data = data[data["runtime_sec"] > 0]
-        data["value"] = data["streams"] * 22 * 3600 / data["runtime_sec"]
-        y_label = "Queries / h"
-        y_formatter = FuncFormatter(lambda x, _: f"{x/1000:.0f}k" if x > 0 else "0")
-    else:
-        data["median_net_gbps"] = pd.to_numeric(data["median_net_gbps"], errors="coerce")
-        data = data[data["median_net_gbps"] >= 0]
-        data["value"] = data["median_net_gbps"]
-        y_label = "Network throughput (Gbit/s)"
-        y_formatter = FuncFormatter(lambda x, _: f"{x:.0f}")
-
-    data = data.dropna(subset=["threads", "streams", "value"])
-    if data.empty:
-        raise ValueError("No valid throughput rows available after filtering")
-
-    _, ax = plt.subplots(figsize=(8, 3.25))
-    ax.set_axisbelow(True)
-    ax.grid(axis='y')
-    ax.grid(axis='x')
-    ax.yaxis.set_major_formatter(y_formatter)
-    ax.tick_params(axis='both', length=0)
-
-    markers = ["o", "s", "^", "D", "v", "P", "X"]
-    for idx, ((source, streams), subset) in enumerate(data.groupby(["source", "streams"])):
-        subset = subset.sort_values("threads")
-        ax.plot(
-            subset["threads"],
-            subset["value"],
-            marker=markers[idx % len(markers)],
-            label=f"{source}, {int(streams)} stream(s)",
-            markersize=3,
-        )
-
-    if metric == "net":
-        ax.axhline(y=100.0, color=COLOR_DECODE, linestyle="--", linewidth=1.2)
-        ax.text(data["threads"].max(), 102.0, "100 Gbit/s", ha="right")
-
-    ax.set_xlabel("Number of threads", fontweight="bold")
-    ax.set_ylabel(y_label, fontweight="bold")
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.2), ncol=3, frameon=False, prop={'weight': 'bold'})
-
-    plt.tight_layout()
-    plt.savefig(output_path, bbox_inches="tight")
 
 def plot_cpu_time(df):
     data = df.copy()
@@ -313,47 +236,6 @@ def plot_csv_json(df_10, df_10_unsorted, df_10_sorted):
     plt.savefig("plots/csv_json.pdf", bbox_inches="tight")
 
 def main():
-    parser = argparse.ArgumentParser(description="Plot benchmark measurements")
-    parser.add_argument(
-        "--throughput-only",
-        action="store_true",
-        help="Plot throughput from available throughput JSON files only (works with partial runs)",
-    )
-    parser.add_argument(
-        "--throughput-input",
-        type=str,
-        default=os.path.join("measurements", "throughput", "**", "*.json"),
-        help="Glob pattern for throughput JSON files",
-    )
-    parser.add_argument(
-        "--throughput-output",
-        type=str,
-        default=os.path.join("plots", "throughput_partial.pdf"),
-        help="Output file path for throughput-only plot",
-    )
-    parser.add_argument(
-        "--throughput-metric",
-        type=str,
-        default="qph",
-        choices=["qph", "net"],
-        help="Metric for --throughput-only: qph (queries/h) or net (median_net_gbps)",
-    )
-    parser.add_argument(
-        "--plot-throughput",
-        action="store_true",
-        help="Enable throughput figures in the default full plotting flow",
-    )
-
-    args = parser.parse_args()
-
-    if args.throughput_only:
-        throughput_rows = load_throughput_measurements(args.throughput_input)
-        if not throughput_rows:
-            raise ValueError(f"No throughput JSON objects found for pattern: {args.throughput_input}")
-        throughput_df = pd.DataFrame(throughput_rows)
-        plot_throughput_only(throughput_df, args.throughput_output, metric=args.throughput_metric)
-        return
-
     # Queries plots
     queries_data = []
 
@@ -364,67 +246,49 @@ def main():
 
     queries_df = pd.DataFrame(queries_data)
 
-    query_required = {"threads", "query", "source", "cpu_time_sec"}
-    if query_required.issubset(set(queries_df.columns)):
-        plot_cpu_time(queries_df)
-    else:
-        print("Skipping cpu_time_stacked.pdf (missing query measurements in measurements/queries/tpch-30)")
+    plot_cpu_time(queries_df)
 
-    if args.plot_throughput:
-        # Throughput plots
-        throughput_data_10 = []
-        throughput_data_30 = []
+    # Throughput plots
+    throughput_data_10 = []
+    throughput_data_30 = []
 
-        for filepath in glob.glob(os.path.join("measurements", "throughput", "tpch-10", "*.json")):
-            with open(filepath, "r") as f:
-                this_data = json.load(f) # each file contains a JSON object
-                throughput_data_10.append(this_data)
-        for filepath in glob.glob(os.path.join("measurements", "throughput", "tpch-30", "*.json")):
-            with open(filepath, "r") as f:
-                this_data = json.load(f) # each file contains a JSON object
-                throughput_data_30.append(this_data)
-        
-        throughput_df_10 = pd.DataFrame(throughput_data_10)
-        throughput_df_30 = pd.DataFrame(throughput_data_30)
+    for filepath in glob.glob(os.path.join("measurements", "throughput", "tpch-10", "*.json")):
+        with open(filepath, "r") as f:
+            this_data = json.load(f) # each file contains a JSON object
+            throughput_data_10.append(this_data)
+    for filepath in glob.glob(os.path.join("measurements", "throughput", "tpch-30", "*.json")):
+        with open(filepath, "r") as f:
+            this_data = json.load(f) # each file contains a JSON object
+            throughput_data_30.append(this_data)
+    
+    throughput_df_10 = pd.DataFrame(throughput_data_10)
+    throughput_df_30 = pd.DataFrame(throughput_data_30)
 
-        throughput_required = {"source", "streams", "threads", "runtime_sec"}
-        if throughput_required.issubset(set(throughput_df_10.columns)) and throughput_required.issubset(set(throughput_df_30.columns)):
-            plot_appetizer(throughput_df_10, throughput_df_30)
-        else:
-            print("Skipping latency_by_threads.pdf (missing throughput measurements in tpch-10/tpch-30)")
+    plot_appetizer(throughput_df_10, throughput_df_30)
 
-        # CSV and JSON plot
-        throughput_data_10 = []
-        unsorted_data_10 = []
-        sorted_data_10 = []
+    # CSV and JSON plot
+    throughput_data_10 = []
+    unsorted_data_10 = []
+    sorted_data_10 = []
 
-        for filepath in glob.glob(os.path.join("measurements", "throughput", "other-10", "*.json")):
-            with open(filepath, "r") as f:
-                this_data = json.load(f) # each file contains a JSON object
-                throughput_data_10.append(this_data)
-        for filepath in glob.glob(os.path.join("measurements", "queries", "tpch-30-random", "*.json")):
-            with open(filepath, "r") as f:
-                this_data = json.load(f) # each file contains a JSON object
-                unsorted_data_10.extend(this_data)
-        for filepath in glob.glob(os.path.join("measurements", "queries", "tpch-30-sorted", "*.json")):
-            with open(filepath, "r") as f:
-                this_data = json.load(f) # each file contains a JSON object
-                sorted_data_10.extend(this_data)
-        
-        throughput_df_10 = pd.DataFrame(throughput_data_10)
-        unsorted_df_10 = pd.DataFrame(unsorted_data_10)
-        sorted_df_10 = pd.DataFrame(sorted_data_10)
+    for filepath in glob.glob(os.path.join("measurements", "throughput", "other-10", "*.json")):
+        with open(filepath, "r") as f:
+            this_data = json.load(f) # each file contains a JSON object
+            throughput_data_10.append(this_data)
+    for filepath in glob.glob(os.path.join("measurements", "queries", "tpch-30-random", "*.json")):
+        with open(filepath, "r") as f:
+            this_data = json.load(f) # each file contains a JSON object
+            unsorted_data_10.extend(this_data)
+    for filepath in glob.glob(os.path.join("measurements", "queries", "tpch-30-sorted", "*.json")):
+        with open(filepath, "r") as f:
+            this_data = json.load(f) # each file contains a JSON object
+            sorted_data_10.extend(this_data)
+    
+    throughput_df_10 = pd.DataFrame(throughput_data_10)
+    unsorted_df_10 = pd.DataFrame(unsorted_data_10)
+    sorted_df_10 = pd.DataFrame(sorted_data_10)
 
-        csv_json_required = {"source", "streams", "threads", "runtime_sec"}
-        query_compare_required = {"source", "threads", "query", "operators", "runtime_sec"}
-        if (
-            csv_json_required.issubset(set(throughput_df_10.columns))
-            and query_compare_required.issubset(set(unsorted_df_10.columns))
-            and query_compare_required.issubset(set(sorted_df_10.columns))
-        ):
-            plot_csv_json(throughput_df_10, unsorted_df_10, sorted_df_10)
-        else:
-            print("Skipping csv_json.pdf (missing csv/json or sorted/random query measurements)")
+    plot_csv_json(throughput_df_10, unsorted_df_10, sorted_df_10)
 
 if __name__ == "__main__":
     os.makedirs("plots", exist_ok=True)
