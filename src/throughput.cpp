@@ -290,7 +290,7 @@ int main(int argc, char* argv[]) {
         std::string output_file = "measurements/throughput/" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count()) + ".json";
         write_json(num_threads, config, result, output_file);
         std::sort(throughput_gbps.begin(), throughput_gbps.end());
-        std::cout << "Throughput Gbit/s: " << throughput_gbps[throughput_gbps.size() / 2] << " \n";
+        std::cout << "Throughput Gbit/s Peak: " << throughput_gbps[throughput_gbps.size() - 1] << " \n";
         std::cout << "Results written to: " << output_file << std::endl;
     }
     
