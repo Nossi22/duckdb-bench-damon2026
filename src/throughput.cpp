@@ -110,9 +110,9 @@ std::vector<double> run_throughput_benchmark(std::shared_ptr<duckdb::DuckDB> db,
     double total_time = std::accumulate(runtimes.begin(), runtimes.end(), 0.0);
     double total_bytes = rx_bytes_very_end - rx_bytes_very_beginning;
 
-    double average_throughput_gbps = (total_bytes * 8.0) / total_time / 1e9;
+    *average_throughput_gbps = (total_bytes * 8.0) / total_time / 1e9;
     
-    *average_throughput_gbps = average_throughput_gbps;
+
     return runtimes;
 }
 
