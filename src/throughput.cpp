@@ -254,7 +254,7 @@ int main(int argc, char* argv[]) {
     setup_con.Query("INSTALL httpfs; LOAD httpfs;");
     
     if (config.source == Source::MINIO) {
-        setup_con.Query("SET parquet_metadata_cache TO FALSE");
+        setup_con.Query("SET parquet_metadata_cache TO TRUE");
         setup_con.Query(
             "DROP SECRET IF EXISTS cluster_test; "
             "CREATE SECRET cluster_test ("
