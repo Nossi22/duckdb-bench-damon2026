@@ -35,7 +35,9 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
 # Main benchmark executables
 add_executable(queries    src/queries.cpp)
 add_executable(throughput src/throughput.cpp)
+add_executable(networkThroughput src/networkThroughput.cpp)
 
 # Link executables
 target_link_libraries(queries PRIVATE ${DUCKDB_TARGET})
 target_link_libraries(throughput PRIVATE ${DUCKDB_TARGET})
+target_link_libraries(networkThroughput PRIVATE ${DUCKDB_TARGET})
