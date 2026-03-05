@@ -73,7 +73,7 @@ uint64_t get_rx_bytes() {
 }
 
 std::vector<double> run_throughput_benchmark(std::shared_ptr<duckdb::DuckDB> db, uint32_t num_streams, 
-        uint32_t num_repetitions, const std::vector<std::string>& queries, std::vector<double>* throughput_gbps) {        
+        uint32_t num_repetitions, const std::vector<std::string>& queries, std::vector<double>* throughput_gbps, double* average_throughput_gbps) {        
     std::vector<QueryStream> streams;
     
     for (int i = 0; i < num_streams; ++i) {
@@ -82,7 +82,7 @@ std::vector<double> run_throughput_benchmark(std::shared_ptr<duckdb::DuckDB> db,
     
     Timer timer;
     std::vector<double> runtimes;
-
+    double rx_bytes_very_beginning = get_rx_bytes();
     for (int i = 0; i < num_repetitions; i++) {
         std::vector<std::thread> threads;
 
@@ -104,8 +104,15 @@ std::vector<double> run_throughput_benchmark(std::shared_ptr<duckdb::DuckDB> db,
         throughput_gbps->push_back((rx_bytes_after - rx_bytes_before) * 8.0 / elapsed / 1e9);
         runtimes.push_back(elapsed);
     }
+
+    double rx_bytes_very_end = get_rx_bytes();
+
+    double total_time = std::accumulate(runtimes.begin(), runtimes.end(), 0.0);
+    double total_bytes = rx_bytes_very_end - rx_bytes_very_beginning;
+
+    double average_throughput_gbps = (total_bytes * 8.0) / total_time / 1e9;
     
-    
+    *average_throughput_gbps = average_throughput_gbps;
     return runtimes;
 }
 
@@ -237,7 +244,7 @@ int main(int argc, char* argv[]) {
     auto db = std::make_shared<duckdb::DuckDB>(nullptr, &duck_config);
     duckdb::Connection setup_con(*db);
     
-    setup_con.Query("SET parquet_metadata_cache TO true");
+    
 
     // Load view rewriter extension
     setup_con.Query("LOAD 'extension/build/release/extension/view_rewriter/view_rewriter.duckdb_extension'");
@@ -247,6 +254,7 @@ int main(int argc, char* argv[]) {
     setup_con.Query("INSTALL httpfs; LOAD httpfs;");
     
     if (config.source == Source::MINIO) {
+        setup_con.Query("SET parquet_metadata_cache TO FALSE");
         setup_con.Query(
             "DROP SECRET IF EXISTS cluster_test; "
             "CREATE SECRET cluster_test ("
@@ -274,6 +282,8 @@ int main(int argc, char* argv[]) {
             );
         }
         std::cout << "MinIO preflight OK for s3://" << config.data_dir << "/*.parquet" << std::endl;
+    } else {
+        setup_con.Query("SET parquet_metadata_cache TO TRUE");
     }
 
     std::cout << "Loading data..." << std::endl;
@@ -285,12 +295,14 @@ int main(int argc, char* argv[]) {
 
         std::cout << "Running throughput benchmark for " << std::to_string(num_threads) << " thread(s)..." << std::endl;
         std::vector<double> throughput_gbps;
+        double average_throughput_gbps = 0.0;
         auto result = run_throughput_benchmark(db, config.streams, config.repetitions, queries, &throughput_gbps);
         
         std::string output_file = "measurements/throughput/" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count()) + ".json";
         write_json(num_threads, config, result, output_file);
         std::sort(throughput_gbps.begin(), throughput_gbps.end());
         std::cout << "Throughput Gbit/s Peak: " << throughput_gbps[throughput_gbps.size() - 1] << " \n";
+        std::cout << "Throughput Gbit/s Average: " << average_throughput_gbps << " \n";
         std::cout << "Results written to: " << output_file << std::endl;
     }
     
