@@ -296,7 +296,7 @@ int main(int argc, char* argv[]) {
         std::cout << "Running throughput benchmark for " << std::to_string(num_threads) << " thread(s)..." << std::endl;
         std::vector<double> throughput_gbps;
         double average_throughput_gbps = 0.0;
-        auto result = run_throughput_benchmark(db, config.streams, config.repetitions, queries, &throughput_gbps);
+        auto result = run_throughput_benchmark(db, config.streams, config.repetitions, queries, &throughput_gbps, &average_throughput_gbps);
         
         std::string output_file = "measurements/throughput/" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count()) + ".json";
         write_json(num_threads, config, result, output_file);
