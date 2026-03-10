@@ -1,6 +1,7 @@
 import json
 import glob
 import os
+import argparse
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
@@ -235,6 +236,88 @@ def plot_csv_json(df_10, df_10_unsorted, df_10_sorted):
     plt.tight_layout()
     plt.savefig("plots/csv_json.pdf", bbox_inches="tight")
 
+def plot_minio_local_runtime_comparison(measurements_dir, local_source, threads, streams, output_file):
+    records = []
+    for filepath in glob.glob(os.path.join(measurements_dir, "**", "*.json"), recursive=True):
+        with open(filepath, "r") as f:
+            obj = json.load(f)
+        if isinstance(obj, dict) and "source" in obj and "runtime_sec" in obj:
+            obj["_path"] = filepath
+            obj["_mtime"] = os.path.getmtime(filepath)
+            records.append(obj)
+
+    if not records:
+        raise RuntimeError(f"No throughput JSON files found under {measurements_dir}")
+
+    df = pd.DataFrame(records)
+    df = df[df["source"].isin(["minio", local_source])]
+    df = df[df["threads"].isin(threads) & df["streams"].isin(streams)]
+    if df.empty:
+        raise RuntimeError("No matching records for selected sources/threads/streams")
+
+    latest = (
+        df.sort_values("_mtime")
+        .groupby(["source", "threads", "streams"], as_index=False)
+        .tail(1)
+    )
+
+    minio = latest[latest["source"] == "minio"][["threads", "streams", "runtime_sec"]].rename(
+        columns={"runtime_sec": "runtime_minio"}
+    )
+    local = latest[latest["source"] == local_source][["threads", "streams", "runtime_sec"]].rename(
+        columns={"runtime_sec": "runtime_local"}
+    )
+    merged = minio.merge(local, on=["threads", "streams"], how="outer")
+    merged = merged[merged["threads"].isin(threads) & merged["streams"].isin(streams)]
+    if merged.empty:
+        raise RuntimeError("No minio/parquet pairs found for selected filters")
+    merged["local_pct_vs_minio"] = merged["runtime_local"] / merged["runtime_minio"] * 100.0
+
+    fig, axes = plt.subplots(1, len(threads), figsize=(4.2 * len(threads), 3.6), squeeze=False)
+    axes = axes[0]
+
+    for idx, t in enumerate(threads):
+        ax = axes[idx]
+        ax.set_axisbelow(True)
+        ax.grid(axis="y")
+        ax.grid(axis="x", visible=False)
+        ax.tick_params(axis="both", length=0)
+
+        subset = merged[merged["threads"] == t].sort_values("streams")
+        x = np.arange(len(streams))
+        minio_runtime = []
+        local_runtime = []
+        for s in streams:
+            row = subset[subset["streams"] == s]
+            minio_runtime.append(float(row["runtime_minio"].iloc[0]) if not row.empty and pd.notna(row["runtime_minio"].iloc[0]) else np.nan)
+            local_runtime.append(float(row["runtime_local"].iloc[0]) if not row.empty and pd.notna(row["runtime_local"].iloc[0]) else np.nan)
+
+        low_runtime =  minio_runtime
+        delta_runtime = np.abs(np.array(minio_runtime) - np.array(local_runtime))
+        red = ax.bar(x, low_runtime, width=0.58, color="#BF616A", label="Network Runtime (s)")
+        blue = ax.bar(x, delta_runtime, bottom=low_runtime, width=0.58, color="#5E81AC", label="Local Runtime (s)")
+        for i, (b, r) in enumerate(zip(local_runtime, minio_runtime)):
+            if np.isnan(b) and np.isnan(r):
+                ax.text(x[i], 0.02, "n/a", ha="center", va="bottom", fontsize=8, transform=ax.get_xaxis_transform())
+            elif not np.isnan(b) and not np.isnan(r) and r != 0:
+                pct = (b / r) * 100.0
+                top_of_delta = low_runtime[i] + delta_runtime[i]
+                ax.text(x[i], top_of_delta + 0.18, f"{pct:.0f}%", ha="center", va="bottom", fontsize=8, color="#BF616A")
+
+        ax.set_xticks(x)
+        ax.set_xticklabels([str(s) for s in streams])
+        ax.set_xlabel("Concurrent streams", fontweight="bold")
+        ax.set_ylabel("Runtime (seconds)", fontweight="bold")
+        ax.set_title(f"{t} threads")
+
+        if idx == len(threads) - 1:
+            fig.legend([red, blue], ["Network Runtime part (red)", "Local Runtime part (blue)"], loc="lower center",
+                       bbox_to_anchor=(0.5, -0.02), ncol=2, frameon=False)
+
+    fig.suptitle(f"Runtime comparison bars: {local_source} vs MinIO", y=0.98)
+    fig.subplots_adjust(bottom=0.22, top=0.82, wspace=0.30)
+    plt.savefig(output_file, bbox_inches="tight")
+
 def main():
     # Queries plots
     queries_data = []
@@ -291,5 +374,25 @@ def main():
     plot_csv_json(throughput_df_10, unsorted_df_10, sorted_df_10)
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--compare-minio-local", action="store_true")
+    parser.add_argument("--measurements-dir", default="measurements/throughput")
+    parser.add_argument("--local-source", default="parquet")
+    parser.add_argument("--threads", default="8,16,32")
+    parser.add_argument("--streams", default="1,2,3,4")
+    parser.add_argument("--output", default="plots/minio_local_runtime_pct.pdf")
+    args = parser.parse_args()
+
     os.makedirs("plots", exist_ok=True)
-    main()
+    if args.compare_minio_local:
+        threads = [int(x.strip()) for x in args.threads.split(",") if x.strip()]
+        streams = [int(x.strip()) for x in args.streams.split(",") if x.strip()]
+        plot_minio_local_runtime_comparison(
+            measurements_dir=args.measurements_dir,
+            local_source=args.local_source,
+            threads=threads,
+            streams=streams,
+            output_file=args.output,
+        )
+    else:
+        main()
