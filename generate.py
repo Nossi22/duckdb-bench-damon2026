@@ -2,7 +2,8 @@ import duckdb
 from pathlib import Path
 import argparse
 
-def generate_tpch_parquet(output_dir: str = "data/tpch", format: str = "parquet", scale_factor: int = 1, ordering: str = "default"):
+def generate_tpch_parquet(output_dir: str = "data/tpch", format: str = "parquet", scale_factor: int = 1,
+                          ordering: str = "default", memory_limit: str = "8GB"):
     """
     Generate TPC-H data and write each table to a Parquet file.
     
@@ -12,8 +13,14 @@ def generate_tpch_parquet(output_dir: str = "data/tpch", format: str = "parquet"
     """
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
+    temp_path = output_path / "duckdb_tmp"
+    temp_path.mkdir(parents=True, exist_ok=True)
+    db_path = output_path / "tpch_generate.duckdb"
     
-    con = duckdb.connect(database=':memory:')
+    con = duckdb.connect(database=str(db_path))
+    con.execute(f"SET temp_directory='{temp_path.as_posix()}'")
+    con.execute(f"SET memory_limit='{memory_limit}'")
+    con.execute("SET preserve_insertion_order=false")
     
     # Install and load TPC-H extension
     con.execute("INSTALL tpch")
@@ -99,9 +106,17 @@ def main():
         dest="ordering",
         help="Ordering of the tables. Use 'sorted' to sort lineitem by l_shipdate and orders by o_orderdate or 'random' for a random permutation. (default: 'default')"
     )
+    parser.add_argument(
+        "--memory-limit",
+        type=str,
+        default="8GB",
+        dest="memory_limit",
+        help="DuckDB memory limit (default: 8GB)"
+    )
     
     args = parser.parse_args()
-    generate_tpch_parquet(scale_factor=args.scale_factor, format=args.format, output_dir=args.output_dir, ordering=args.ordering)
+    generate_tpch_parquet(scale_factor=args.scale_factor, format=args.format, output_dir=args.output_dir,
+                          ordering=args.ordering, memory_limit=args.memory_limit)
 
 if __name__ == "__main__":
     main()

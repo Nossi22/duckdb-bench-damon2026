@@ -7,7 +7,9 @@
 #include <algorithm>
 #include <numeric>
 #include <cmath>
+#include <cstdlib>
 #include <getopt.h>
+#include <memory>
 
 #include <duckdb.hpp>
 
@@ -22,6 +24,7 @@ struct Config {
     Source source = Source::PARQUET;
     int threads = 1;
     int repetitions = 5;
+    bool cold_per_run = false;
 };
 
 // ============================================================================
@@ -69,7 +72,7 @@ Statistics median(std::vector<Statistics> values) {
 OperatorBreakdown traverse(const duckdb::ProfilingNode &node) {
     OperatorBreakdown stats;
     auto &info = node.GetProfilingInfo();
-    
+
     std::string type = info.GetMetricValue<std::string>(duckdb::MetricsType::OPERATOR_NAME);
     auto cpu_time = info.GetMetricValue<double>(duckdb::MetricsType::OPERATOR_TIMING);
 
@@ -93,7 +96,7 @@ OperatorBreakdown traverse(const duckdb::ProfilingNode &node) {
         std::cout << "Unknown type " << type << std::endl;
         stats.other += cpu_time;
     }
-    
+
     // Recurse into children
     for (auto &child : node.children) {
         stats += traverse(*child);
@@ -113,59 +116,83 @@ struct QueryResult {
 
 std::vector<QueryResult> run_benchmark(const Config& config, const std::vector<fs::path> &query_paths) {
     std::vector<QueryResult> results;
-    
-    // Initialize DuckDB
-    duckdb::DBConfig duck_config;
-    duck_config.SetOptionByName("allow_unsigned_extensions", duckdb::Value::BOOLEAN(true));
-    duckdb::DuckDB db(nullptr, &duck_config); // In-memory database
-    duckdb::Connection con(db);
-    
-    con.Query("SET parquet_metadata_cache TO true");
 
-    // Load view rewriter extension
-    con.Query("LOAD 'extension/build/release/extension/view_rewriter/view_rewriter.duckdb_extension'");
-    
-    // Load data
-    load_data(con, config.data_dir, config.source);
+    std::shared_ptr<duckdb::DuckDB> db;
+    auto init_connection = [&]() {
+        duckdb::DBConfig duck_config;
+        duck_config.SetOptionByName("allow_unsigned_extensions", duckdb::Value::BOOLEAN(true));
+        db = std::make_shared<duckdb::DuckDB>(nullptr, &duck_config); // In-memory database
+        auto con = std::make_unique<duckdb::Connection>(*db);
 
-    con.Query("SELECT * FROM view_rewriter_stats()");
+        // Keep existing metadata cache behavior; cold mode isolates runs via fresh DB.
+        con->Query("SET parquet_metadata_cache TO true");
+        if (config.source == Source::MINIO) {
+            auto endpoint = std::getenv("DUCKDB_MINIO_ENDPOINT");
+            std::string endpoint_value = endpoint ? endpoint : "10.253.74.70:9000";
+            con->Query("INSTALL httpfs; LOAD httpfs;");
+            con->Query(
+                "DROP SECRET IF EXISTS cluster_test; "
+                "CREATE SECRET cluster_test ("
+                "TYPE S3, KEY_ID 'minioadmin', SECRET 'minioadmin', "
+                "ENDPOINT '" + endpoint_value + "', URL_STYLE 'path', USE_SSL false);"
+            );
+        }
 
-    con.Query("SET threads TO " + std::to_string(config.threads));
+        // Load view rewriter extension
+        con->Query("LOAD 'extension/build/release/extension/view_rewriter/view_rewriter.duckdb_extension'");
 
-    // Enable profiling
-    con.Query("PRAGMA enable_profiling='no_output'");
-    
+        // Load data
+        load_data(*con, config.data_dir, config.source);
+
+        con->Query("SELECT * FROM view_rewriter_stats()");
+        con->Query("SET threads TO " + std::to_string(config.threads));
+
+        // Enable profiling
+        con->Query("PRAGMA enable_profiling='no_output'");
+
+        return con;
+    };
+
+    std::unique_ptr<duckdb::Connection> con;
+    if (!config.cold_per_run) {
+        con = init_connection();
+    }
+
     Timer timer;
-    
+
     // Run each query
     for (const auto& query_path : query_paths) {
         std::vector<Statistics> stats;
 
         // Print filename (matching Python behavior)
         std::cout << "Running query " << query_path.string() << "..." << std::endl;
-        
+
         // Read query
         std::ifstream f(query_path);
         std::string sql((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-        
+
         QueryResult result;
         result.filename = query_path.string();
-        
+
         // Timed runs
         for (int i = 0; i < config.repetitions; ++i) {
+            if (config.cold_per_run) {
+                con = init_connection();
+            }
+
             timer.start();
-            auto r = con.Query(sql);
-            
+            auto r = con->Query(sql);
+
             if (r->HasError()) {
                 throw std::runtime_error("Query error: " + r->GetError());
             }
-            
+
             // Materialize results
             r->Fetch();
             double elapsed = timer.stop_seconds();
-            
+
             // Get statistics
-            auto profiling_tree = con.GetProfilingTree();
+            auto profiling_tree = con->GetProfilingTree();
             auto profiling_info = profiling_tree->GetProfilingInfo();
 
             Statistics stat;
@@ -177,12 +204,12 @@ std::vector<QueryResult> run_benchmark(const Config& config, const std::vector<f
             stat.ops = traverse(*profiling_tree);
             stats.push_back(stat);
         }
-        
+
         // Calculate average
         result.stats = median(stats);
         results.push_back(result);
     }
-    
+
     return results;
 }
 
@@ -201,23 +228,25 @@ void print_usage(const char* prog) {
               << "  -r, --repetitions N   Number of repetitions per query (default: 5)\n"
               << "  -t, --threads N       Number of threads (default: 1)\n"
               << "  -d, --data-dir DIR    Data directory (default: /mnt/ramdisk)\n"
+              << "  -C, --cold-per-run    Recreate DB/load data for each repetition\n"
               << "  -h, --help            Show this help message\n";
 }
 
 Config parse_args(int argc, char* argv[]) {
     Config config;
-    
+
     static struct option long_options[] = {
         {"source",      required_argument, 0, 's'},
         {"repetitions", required_argument, 0, 'r'},
         {"threads",     required_argument, 0, 't'},
         {"data-dir",    required_argument, 0, 'd'},
+        {"cold-per-run", no_argument,      0, 'C'},
         {"help",        no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
-    
+
     int opt;
-    while ((opt = getopt_long(argc, argv, "s:r:t:d:h", long_options, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "s:r:t:d:Ch", long_options, nullptr)) != -1) {
         switch (opt) {
             case 's':
                 config.source = string_to_source(optarg);
@@ -231,6 +260,9 @@ Config parse_args(int argc, char* argv[]) {
             case 'd':
                 config.data_dir = optarg;
                 break;
+            case 'C':
+                config.cold_per_run = true;
+                break;
             case 'h':
                 print_usage(argv[0]);
                 exit(0);
@@ -239,7 +271,7 @@ Config parse_args(int argc, char* argv[]) {
                 exit(1);
         }
     }
-    
+
     return config;
 }
 
@@ -249,18 +281,18 @@ Config parse_args(int argc, char* argv[]) {
 
 void write_json(const Config &config, const std::vector<QueryResult> &results, const std::string &output_file) {
     std::ofstream out(output_file);
-    
+
     // Write results
     out << "[\n";
     for (size_t i = 0; i < results.size(); ++i) {
         const auto& r = results[i];
         out << "    {\n";
         out << "        \"query\": \"" << r.filename << "\",\n";
-        out << "        \"runtime_sec\": " << std::fixed << std::setprecision(6) 
+        out << "        \"runtime_sec\": " << std::fixed << std::setprecision(6)
             << r.stats.runtime << ",\n";
-        out << "        \"latency_sec\": " << std::fixed << std::setprecision(6) 
+        out << "        \"latency_sec\": " << std::fixed << std::setprecision(6)
             << r.stats.latency << ",\n";
-        out << "        \"cpu_time_sec\": " << std::fixed << std::setprecision(6) 
+        out << "        \"cpu_time_sec\": " << std::fixed << std::setprecision(6)
             << r.stats.cpu_time << ",\n";
         out << "        \"memory_footprint_bytes\": " << r.stats.memory_footprint << ",\n";
         out << "        \"rows_scanned\": " << r.stats.rows_scanned << ",\n";
@@ -295,8 +327,8 @@ int main(int argc, char* argv[]) {
     std::vector<fs::path> query_paths = get_queries(config.source);
 
     auto results = run_benchmark(config, query_paths);
-    
+
     write_json(config, results, "measurements/queries/" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count()) + ".json");
-    
+
     return 0;
 }

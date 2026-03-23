@@ -236,7 +236,7 @@ def plot_csv_json(df_10, df_10_unsorted, df_10_sorted):
     plt.tight_layout()
     plt.savefig("plots/csv_json.pdf", bbox_inches="tight")
 
-def plot_minio_local_runtime_comparison(measurements_dir, local_source, threads, streams, output_file):
+def plot_minio_local_runtime_comparison(measurements_dir, local_source, threads, streams, output_file, x_axis="streams"):
     records = []
     for filepath in glob.glob(os.path.join(measurements_dir, "**", "*.json"), recursive=True):
         with open(filepath, "r") as f:
@@ -273,29 +273,44 @@ def plot_minio_local_runtime_comparison(measurements_dir, local_source, threads,
         raise RuntimeError("No minio/parquet pairs found for selected filters")
     merged["local_pct_vs_minio"] = merged["runtime_local"] / merged["runtime_minio"] * 100.0
 
-    fig, axes = plt.subplots(1, len(threads), figsize=(4.2 * len(threads), 3.6), squeeze=False)
+    if x_axis == "threads":
+        panel_values = streams
+        x_values = threads
+        panel_col = "streams"
+        x_col = "threads"
+        x_label = "Threads"
+        panel_title_fmt = "{} streams"
+    else:
+        panel_values = threads
+        x_values = streams
+        panel_col = "threads"
+        x_col = "streams"
+        x_label = "Concurrent streams"
+        panel_title_fmt = "{} threads"
+
+    fig, axes = plt.subplots(1, len(panel_values), figsize=(4.2 * len(panel_values), 3.6), squeeze=False)
     axes = axes[0]
 
-    for idx, t in enumerate(threads):
+    for idx, panel_value in enumerate(panel_values):
         ax = axes[idx]
         ax.set_axisbelow(True)
         ax.grid(axis="y")
         ax.grid(axis="x", visible=False)
         ax.tick_params(axis="both", length=0)
 
-        subset = merged[merged["threads"] == t].sort_values("streams")
-        x = np.arange(len(streams))
+        subset = merged[merged[panel_col] == panel_value].sort_values(x_col)
+        x = np.arange(len(x_values))
         minio_runtime = []
         local_runtime = []
-        for s in streams:
-            row = subset[subset["streams"] == s]
+        for x_value in x_values:
+            row = subset[subset[x_col] == x_value]
             minio_runtime.append(float(row["runtime_minio"].iloc[0]) if not row.empty and pd.notna(row["runtime_minio"].iloc[0]) else np.nan)
             local_runtime.append(float(row["runtime_local"].iloc[0]) if not row.empty and pd.notna(row["runtime_local"].iloc[0]) else np.nan)
 
         low_runtime =  minio_runtime
         delta_runtime = np.abs(np.array(minio_runtime) - np.array(local_runtime))
-        red = ax.bar(x, low_runtime, width=0.58, color="#BF616A", label="Network Runtime (s)")
-        blue = ax.bar(x, delta_runtime, bottom=low_runtime, width=0.58, color="#5E81AC", label="Local Runtime (s)")
+        red = ax.bar(x, low_runtime, width=0.58, color="#BF616A", label="Local Runtime (s)")
+        blue = ax.bar(x, delta_runtime, bottom=low_runtime, width=0.58, color="#5E81AC", label="Network Runtime (s)")
         for i, (b, r) in enumerate(zip(local_runtime, minio_runtime)):
             if np.isnan(b) and np.isnan(r):
                 ax.text(x[i], 0.02, "n/a", ha="center", va="bottom", fontsize=8, transform=ax.get_xaxis_transform())
@@ -305,13 +320,13 @@ def plot_minio_local_runtime_comparison(measurements_dir, local_source, threads,
                 ax.text(x[i], top_of_delta + 0.18, f"{pct:.0f}%", ha="center", va="bottom", fontsize=8, color="#BF616A")
 
         ax.set_xticks(x)
-        ax.set_xticklabels([str(s) for s in streams])
-        ax.set_xlabel("Concurrent streams", fontweight="bold")
+        ax.set_xticklabels([str(v) for v in x_values])
+        ax.set_xlabel(x_label, fontweight="bold")
         ax.set_ylabel("Runtime (seconds)", fontweight="bold")
-        ax.set_title(f"{t} threads")
+        ax.set_title(panel_title_fmt.format(panel_value))
 
-        if idx == len(threads) - 1:
-            fig.legend([red, blue], ["Network Runtime part (red)", "Local Runtime part (blue)"], loc="lower center",
+        if idx == len(panel_values) - 1:
+            fig.legend([red, blue], ["Local Runtime part (red)", "Network Runtime part (blue)"], loc="lower center",
                        bbox_to_anchor=(0.5, -0.02), ncol=2, frameon=False)
 
     fig.suptitle(f"Runtime comparison bars: {local_source} vs MinIO", y=0.98)
@@ -380,6 +395,7 @@ if __name__ == "__main__":
     parser.add_argument("--local-source", default="parquet")
     parser.add_argument("--threads", default="8,16,32")
     parser.add_argument("--streams", default="1,2,3,4")
+    parser.add_argument("--x-axis", choices=["streams", "threads"], default="streams")
     parser.add_argument("--output", default="plots/minio_local_runtime_pct.pdf")
     args = parser.parse_args()
 
@@ -393,6 +409,7 @@ if __name__ == "__main__":
             threads=threads,
             streams=streams,
             output_file=args.output,
+            x_axis=args.x_axis,
         )
     else:
         main()

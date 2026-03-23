@@ -26,6 +26,7 @@ struct Config {
     uint32_t repetitions = 5;
     uint32_t streams = 2;  // Number of concurrent query streams
     std::string s3_endpoint = "minio:9000";
+    bool cold_per_thread = false;
 };
 
 // ============================================================================
@@ -134,6 +135,7 @@ void print_usage(const char* prog) {
               << "  -S, --streams N       Number of concurrent query streams (default: 2)\n"
               << "  -e, --s3-endpoint ENDPOINT S3 endpoint (default: minio:9000)\n"
               << "  -d, --data-dir DIR    Data directory (default: /mnt/ramdisk)\n"
+              << "  -C, --cold-per-thread Recreate DB/load data for each thread setting\n"
               << "  -h, --help            Show this help message\n";
 }
 
@@ -147,19 +149,21 @@ Config parse_args(int argc, char* argv[]) {
         {"streams",     required_argument, 0, 'S'},
         {"data-dir",    required_argument, 0, 'd'},
         {"s3-endpoint", required_argument, 0, 'e'},
+        {"cold-per-thread", no_argument,   0, 'C'},
         {"help",        no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
     
     int opt;
-    while ((opt = getopt_long(argc, argv, "s:r:t:S:d:e:h", long_options, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "s:r:t:S:d:e:Ch", long_options, nullptr)) != -1) {
         switch (opt) {
             case 's':
                 config.source = string_to_source(optarg);
                 break;
             case 't':
                 try {
-                    config.threads = parse_thread_arg(optarg);
+                    config.threads = parse_thread_arg(                "URL_STYLE 'path', USE_SSL false);"
+
                 } catch (const std::exception& e) {
                     std::cerr << "Error parsing threads arg: " << e.what() << std::endl;
                     print_usage(argv[0]);
@@ -177,6 +181,9 @@ Config parse_args(int argc, char* argv[]) {
                 break;
             case 'e':
                 config.s3_endpoint = optarg;
+                break;
+            case 'C':
+                config.cold_per_thread = true;
                 break;
             case 'h':
                 print_usage(argv[0]);
@@ -238,59 +245,63 @@ int main(int argc, char* argv[]) {
         queries.push_back(query);
     }
 
-    // Initialize DuckDB instance
-    duckdb::DBConfig duck_config;
-    duck_config.SetOptionByName("allow_unsigned_extensions", duckdb::Value::BOOLEAN(true));
-    auto db = std::make_shared<duckdb::DuckDB>(nullptr, &duck_config);
-    duckdb::Connection setup_con(*db);
-    
-    
+    auto init_db = [&]() {
+        duckdb::DBConfig duck_config;
+        duck_config.SetOptionByName("allow_unsigned_extensions", duckdb::Value::BOOLEAN(true));
+        auto db = std::make_shared<duckdb::DuckDB>(nullptr, &duck_config);
+        duckdb::Connection setup_con(*db);
 
-    // Load view rewriter extension
-    setup_con.Query("LOAD 'extension/build/release/extension/view_rewriter/view_rewriter.duckdb_extension'");
-    
-    // Load data
-    setup_con.Query("INSTALL json; LOAD json");
-    setup_con.Query("INSTALL httpfs; LOAD httpfs;");
-    
-    if (config.source == Source::MINIO) {
-        setup_con.Query("SET parquet_metadata_cache TO TRUE");
-        setup_con.Query(
-            "DROP SECRET IF EXISTS cluster_test; "
-            "CREATE SECRET cluster_test ("
-            "TYPE S3, KEY_ID 'minioadmin', SECRET 'minioadmin', "
-            "ENDPOINT '" + config.s3_endpoint + ":9000', " 
-            "URL_STYLE 'path', USE_SSL false);"
-        );
+        // Load view rewriter extension
+        setup_con.Query("LOAD 'extension/build/release/extension/view_rewriter/view_rewriter.duckdb_extension'");
+        setup_con.Query("INSTALL json; LOAD json");
+        setup_con.Query("INSTALL httpfs; LOAD httpfs;");
 
-
-        //check connection to MinIO by reading metadata of one parquet file
-        auto preflight = setup_con.Query(
-            "SELECT * FROM read_parquet('s3://" + config.data_dir + "/*.parquet') LIMIT 1"
-        );
-        if (preflight->HasError()) {
-            throw std::runtime_error(
-                "MinIO preflight failed for s3://" + config.data_dir + "/*.parquet: " +
-                preflight->GetError()
+        if (config.source == Source::MINIO) {
+            setup_con.Query("SET parquet_metadata_cache TO TRUE");
+            setup_con.Query(
+                "DROP SECRET IF EXISTS cluster_test; "
+                "CREATE SECRET cluster_test ("
+                "TYPE S3, KEY_ID 'minioadmin', SECRET 'minioadmin', "
+                "ENDPOINT '" + config.s3_endpoint + ":9000', "
+                "URL_STYLE 'path', USE_SSL false);"
             );
-        }
-        preflight->Fetch();
-        if (preflight->HasError()) {
-            throw std::runtime_error(
-                "MinIO preflight failed for s3://" + config.data_dir + "/*.parquet: " +
-                preflight->GetError()
+
+            // check connection to MinIO by reading metadata of one parquet file
+            auto preflight = setup_con.Query(
+                "SELECT * FROM read_parquet('s3://" + config.data_dir + "/*.parquet') LIMIT 1"
             );
+            if (preflight->HasError()) {
+                throw std::runtime_error(
+                    "MinIO preflight failed for s3://" + config.data_dir + "/*.parquet: " + preflight->GetError()
+                );
+            }
+            preflight->Fetch();
+            if (preflight->HasError()) {
+                throw std::runtime_error(
+                    "MinIO preflight failed for s3://" + config.data_dir + "/*.parquet: " + preflight->GetError()
+                );
+            }
+            std::cout << "MinIO preflight OK for s3://" << config.data_dir << "/*.parquet" << std::endl;
+        } else {
+            setup_con.Query("SET parquet_metadata_cache TO TRUE");
         }
-        std::cout << "MinIO preflight OK for s3://" << config.data_dir << "/*.parquet" << std::endl;
-    } else {
-        setup_con.Query("SET parquet_metadata_cache TO TRUE");
+
+        std::cout << "Loading data..." << std::endl;
+        load_data(setup_con, config.data_dir, config.source);
+        return db;
+    };
+
+    std::shared_ptr<duckdb::DuckDB> db;
+    if (!config.cold_per_thread) {
+        db = init_db();
     }
-
-    std::cout << "Loading data..." << std::endl;
-    load_data(setup_con, config.data_dir, config.source);
 
     // Run benchmark
     for (uint32_t num_threads : config.threads) {
+        if (config.cold_per_thread) {
+            db = init_db();
+        }
+        duckdb::Connection setup_con(*db);
         setup_con.Query("SET GLOBAL threads TO " + std::to_string(num_threads));
 
         std::cout << "Running throughput benchmark for " << std::to_string(num_threads) << " thread(s)..." << std::endl;

@@ -1,0 +1,10 @@
+{
+    "runtime_sec": 14.443980,
+    "runtimes": [14.368922, 14.428813, 14.443980, 14.543075, 16.661129],
+    "threads": 32,
+    "streams": 1,
+    "s3_endpoint": "10.253.74.70",
+    "data_dir": "testbench/tpch-30",
+    "source": "minio",
+    "repetitions": 5
+}

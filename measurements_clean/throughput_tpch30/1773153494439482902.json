@@ -1,0 +1,10 @@
+{
+    "runtime_sec": 81.647648,
+    "runtimes": [80.183837, 81.128734, 81.647648, 81.831860, 82.340927],
+    "threads": 8,
+    "streams": 4,
+    "s3_endpoint": "minio:9000",
+    "data_dir": "/local/home/jkreissl/tpch-30",
+    "source": "parquet",
+    "repetitions": 5
+}
